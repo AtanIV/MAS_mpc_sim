@@ -1,0 +1,15 @@
+{"time":"2025-11-30T01:34:19.871869841+08:00","level":"INFO","msg":"stream: starting","core version":"0.19.11","symlink path":"logs/DoubleIntegrator/gcbf+/seed1234_20251130013419/wandb/offline-run-20251130_013419-x55tnlaw/logs/debug-core.log"}
+{"time":"2025-11-30T01:34:19.975704982+08:00","level":"WARN","msg":"GraphQL client is nil, skipping feature loading"}
+{"time":"2025-11-30T01:34:19.975915108+08:00","level":"INFO","msg":"created new stream","id":"x55tnlaw"}
+{"time":"2025-11-30T01:34:19.975934102+08:00","level":"INFO","msg":"stream: started","id":"x55tnlaw"}
+{"time":"2025-11-30T01:34:19.975959032+08:00","level":"INFO","msg":"writer: Do: started","stream_id":"x55tnlaw"}
+{"time":"2025-11-30T01:34:19.975981588+08:00","level":"INFO","msg":"handler: started","stream_id":"x55tnlaw"}
+{"time":"2025-11-30T01:34:19.975998208+08:00","level":"INFO","msg":"sender: started","stream_id":"x55tnlaw"}
+{"time":"2025-11-30T01:34:19.978475787+08:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-11-30T14:25:17.9523844+08:00","level":"INFO","msg":"stream: closing","id":"x55tnlaw"}
+{"time":"2025-11-30T14:25:17.95266817+08:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-11-30T14:25:17.954268684+08:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-11-30T14:25:17.956008114+08:00","level":"INFO","msg":"handler: closed","stream_id":"x55tnlaw"}
+{"time":"2025-11-30T14:25:17.956017612+08:00","level":"INFO","msg":"writer: Close: closed","stream_id":"x55tnlaw"}
+{"time":"2025-11-30T14:25:17.956261014+08:00","level":"INFO","msg":"sender: closed","stream_id":"x55tnlaw"}
+{"time":"2025-11-30T14:25:17.956282386+08:00","level":"INFO","msg":"stream: closed","id":"x55tnlaw"}

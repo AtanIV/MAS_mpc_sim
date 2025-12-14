@@ -1,0 +1,25 @@
+2025-11-08 03:53:52,157 INFO    MainThread:116353 [wandb_setup.py:_flush():70] Current SDK version is 0.19.11
+2025-11-08 03:53:52,157 INFO    MainThread:116353 [wandb_setup.py:_flush():70] Configure stats pid to 116353
+2025-11-08 03:53:52,157 INFO    MainThread:116353 [wandb_setup.py:_flush():70] Loading settings from /home/tung656/.config/wandb/settings
+2025-11-08 03:53:52,157 INFO    MainThread:116353 [wandb_setup.py:_flush():70] Loading settings from /home/tung656/MastersFiles/Y2/MAS_Simulations_mpc/wandb/settings
+2025-11-08 03:53:52,157 INFO    MainThread:116353 [wandb_setup.py:_flush():70] Loading settings from environment variables
+2025-11-08 03:53:52,158 INFO    MainThread:116353 [wandb_init.py:setup_run_log_directory():724] Logging user logs to ./logs/DoubleIntegrator/gcbf+/seed1234_20251108035351/wandb/offline-run-20251108_035352-vd9c2mcg/logs/debug.log
+2025-11-08 03:53:52,158 INFO    MainThread:116353 [wandb_init.py:setup_run_log_directory():725] Logging internal logs to ./logs/DoubleIntegrator/gcbf+/seed1234_20251108035351/wandb/offline-run-20251108_035352-vd9c2mcg/logs/debug-internal.log
+2025-11-08 03:53:52,158 INFO    MainThread:116353 [wandb_init.py:init():852] calling init triggers
+2025-11-08 03:53:52,158 INFO    MainThread:116353 [wandb_init.py:init():857] wandb.init called with sweep_config: {}
+config: {'_wandb': {}}
+2025-11-08 03:53:52,158 INFO    MainThread:116353 [wandb_init.py:init():893] starting backend
+2025-11-08 03:53:52,158 INFO    MainThread:116353 [wandb_init.py:init():897] sending inform_init request
+2025-11-08 03:53:52,159 INFO    MainThread:116353 [backend.py:_multiprocessing_setup():101] multiprocessing start_methods=fork,spawn,forkserver, using: spawn
+2025-11-08 03:53:52,159 INFO    MainThread:116353 [wandb_init.py:init():907] backend started and connected
+2025-11-08 03:53:52,160 INFO    MainThread:116353 [wandb_init.py:init():1005] updated telemetry
+2025-11-08 03:53:52,162 INFO    MainThread:116353 [wandb_init.py:init():1029] communicating run to backend with 90.0 second timeout
+2025-11-08 03:53:52,267 INFO    MainThread:116353 [wandb_init.py:init():1104] starting run threads in backend
+2025-11-08 03:53:52,316 INFO    MainThread:116353 [wandb_run.py:_console_start():2573] atexit reg
+2025-11-08 03:53:52,317 INFO    MainThread:116353 [wandb_run.py:_redirect():2421] redirect: wrap_raw
+2025-11-08 03:53:52,317 INFO    MainThread:116353 [wandb_run.py:_redirect():2490] Wrapping output streams.
+2025-11-08 03:53:52,317 INFO    MainThread:116353 [wandb_run.py:_redirect():2513] Redirects installed.
+2025-11-08 03:53:52,318 INFO    MainThread:116353 [wandb_init.py:init():1150] run started, returning control to user process
+2025-11-08 03:53:52,319 INFO    MainThread:116353 [wandb_run.py:_config_callback():1436] config_cb None None {'num_agents': 8, 'algo': 'gcbf+', 'env': 'DoubleIntegrator', 'seed': 1234, 'steps': 8000, 'name': None, 'debug': False, 'obs': None, 'n_rays': 32, 'area_size': 4.0, 'gnn_layers': 1, 'alpha': 1.0, 'horizon': 24, 'lr_actor': 1e-05, 'lr_cbf': 1e-05, 'loss_action_coef': 0.0001, 'loss_unsafe_coef': 1.0, 'loss_safe_coef': 1.0, 'loss_h_dot_coef': 0.01, 'buffer_size': 512, 'n_env_train': 4, 'n_env_test': 16, 'log_dir': './logs', 'eval_interval': 1, 'eval_epi': 1, 'save_interval': 100}
+2025-11-08 03:53:52,319 INFO    MainThread:116353 [wandb_run.py:_config_callback():1436] config_cb None None {'batch_size': 256, 'lr_actor': 1e-05, 'lr_cbf': 1e-05, 'alpha': 1.0, 'eps': 0.02, 'inner_epoch': 8, 'loss_action_coef': 0.0001, 'loss_unsafe_coef': 1.0, 'loss_safe_coef': 1.0, 'loss_h_dot_coef': 0.01, 'gnn_layers': 1, 'seed': 1234, 'max_grad_norm': 2.0, 'horizon': 24}
+2025-11-09 05:30:41,499 INFO    MsgRouterThr:116353 [mailbox.py:close():129] [no run ID] Closing mailbox, abandoning 0 handles.

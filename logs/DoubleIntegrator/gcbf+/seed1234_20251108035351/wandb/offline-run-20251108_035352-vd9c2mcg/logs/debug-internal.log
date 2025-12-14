@@ -1,0 +1,15 @@
+{"time":"2025-11-08T03:53:52.163197802+08:00","level":"INFO","msg":"stream: starting","core version":"0.19.11","symlink path":"logs/DoubleIntegrator/gcbf+/seed1234_20251108035351/wandb/offline-run-20251108_035352-vd9c2mcg/logs/debug-core.log"}
+{"time":"2025-11-08T03:53:52.265917033+08:00","level":"WARN","msg":"GraphQL client is nil, skipping feature loading"}
+{"time":"2025-11-08T03:53:52.266000143+08:00","level":"INFO","msg":"created new stream","id":"vd9c2mcg"}
+{"time":"2025-11-08T03:53:52.266015578+08:00","level":"INFO","msg":"stream: started","id":"vd9c2mcg"}
+{"time":"2025-11-08T03:53:52.266052384+08:00","level":"INFO","msg":"writer: Do: started","stream_id":"vd9c2mcg"}
+{"time":"2025-11-08T03:53:52.26607613+08:00","level":"INFO","msg":"handler: started","stream_id":"vd9c2mcg"}
+{"time":"2025-11-08T03:53:52.266118872+08:00","level":"INFO","msg":"sender: started","stream_id":"vd9c2mcg"}
+{"time":"2025-11-08T03:53:52.268402023+08:00","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-11-09T05:30:41.502051481+08:00","level":"INFO","msg":"stream: closing","id":"vd9c2mcg"}
+{"time":"2025-11-09T05:30:41.502113221+08:00","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-11-09T05:30:41.50215359+08:00","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-11-09T05:30:41.50236968+08:00","level":"INFO","msg":"handler: closed","stream_id":"vd9c2mcg"}
+{"time":"2025-11-09T05:30:41.502380366+08:00","level":"INFO","msg":"writer: Close: closed","stream_id":"vd9c2mcg"}
+{"time":"2025-11-09T05:30:41.502412423+08:00","level":"INFO","msg":"sender: closed","stream_id":"vd9c2mcg"}
+{"time":"2025-11-09T05:30:41.502432608+08:00","level":"INFO","msg":"stream: closed","id":"vd9c2mcg"}

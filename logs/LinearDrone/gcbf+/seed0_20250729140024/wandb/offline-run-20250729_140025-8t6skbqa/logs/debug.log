@@ -1,0 +1,24 @@
+2025-07-29 14:00:25,008 INFO    MainThread:14282 [wandb_setup.py:_flush():70] Current SDK version is 0.19.11
+2025-07-29 14:00:25,008 INFO    MainThread:14282 [wandb_setup.py:_flush():70] Configure stats pid to 14282
+2025-07-29 14:00:25,008 INFO    MainThread:14282 [wandb_setup.py:_flush():70] Loading settings from /home/tung656/.config/wandb/settings
+2025-07-29 14:00:25,008 INFO    MainThread:14282 [wandb_setup.py:_flush():70] Loading settings from /home/tung656/MastersFiles/Y2/MAS_Simulations_mpc/wandb/settings
+2025-07-29 14:00:25,008 INFO    MainThread:14282 [wandb_setup.py:_flush():70] Loading settings from environment variables
+2025-07-29 14:00:25,008 INFO    MainThread:14282 [wandb_init.py:setup_run_log_directory():724] Logging user logs to ./logs/LinearDrone/gcbf+/seed0_20250729140024/wandb/offline-run-20250729_140025-8t6skbqa/logs/debug.log
+2025-07-29 14:00:25,008 INFO    MainThread:14282 [wandb_init.py:setup_run_log_directory():725] Logging internal logs to ./logs/LinearDrone/gcbf+/seed0_20250729140024/wandb/offline-run-20250729_140025-8t6skbqa/logs/debug-internal.log
+2025-07-29 14:00:25,008 INFO    MainThread:14282 [wandb_init.py:init():852] calling init triggers
+2025-07-29 14:00:25,008 INFO    MainThread:14282 [wandb_init.py:init():857] wandb.init called with sweep_config: {}
+config: {'_wandb': {}}
+2025-07-29 14:00:25,008 INFO    MainThread:14282 [wandb_init.py:init():893] starting backend
+2025-07-29 14:00:25,008 INFO    MainThread:14282 [wandb_init.py:init():897] sending inform_init request
+2025-07-29 14:00:25,016 INFO    MainThread:14282 [backend.py:_multiprocessing_setup():101] multiprocessing start_methods=fork,spawn,forkserver, using: spawn
+2025-07-29 14:00:25,016 INFO    MainThread:14282 [wandb_init.py:init():907] backend started and connected
+2025-07-29 14:00:25,017 INFO    MainThread:14282 [wandb_init.py:init():1005] updated telemetry
+2025-07-29 14:00:25,019 INFO    MainThread:14282 [wandb_init.py:init():1029] communicating run to backend with 90.0 second timeout
+2025-07-29 14:00:25,127 INFO    MainThread:14282 [wandb_init.py:init():1104] starting run threads in backend
+2025-07-29 14:00:25,177 INFO    MainThread:14282 [wandb_run.py:_console_start():2573] atexit reg
+2025-07-29 14:00:25,177 INFO    MainThread:14282 [wandb_run.py:_redirect():2421] redirect: wrap_raw
+2025-07-29 14:00:25,177 INFO    MainThread:14282 [wandb_run.py:_redirect():2490] Wrapping output streams.
+2025-07-29 14:00:25,177 INFO    MainThread:14282 [wandb_run.py:_redirect():2513] Redirects installed.
+2025-07-29 14:00:25,179 INFO    MainThread:14282 [wandb_init.py:init():1150] run started, returning control to user process
+2025-07-29 14:00:25,179 INFO    MainThread:14282 [wandb_run.py:_config_callback():1436] config_cb None None {'num_agents': 8, 'algo': 'gcbf+', 'env': 'LinearDrone', 'seed': 0, 'steps': 3000, 'name': None, 'debug': False, 'obs': None, 'n_rays': 32, 'area_size': 2.0, 'gnn_layers': 1, 'alpha': 1.0, 'horizon': 32, 'lr_actor': 1e-05, 'lr_cbf': 0.0001, 'loss_action_coef': 3e-05, 'loss_unsafe_coef': 1.0, 'loss_safe_coef': 1.0, 'loss_h_dot_coef': 0.01, 'buffer_size': 512, 'n_env_train': 1, 'n_env_test': 32, 'log_dir': './logs', 'eval_interval': 1, 'eval_epi': 1, 'save_interval': 10}
+2025-07-29 14:00:25,180 INFO    MainThread:14282 [wandb_run.py:_config_callback():1436] config_cb None None {'batch_size': 256, 'lr_actor': 1e-05, 'lr_cbf': 0.0001, 'alpha': 1.0, 'eps': 0.02, 'inner_epoch': 8, 'loss_action_coef': 3e-05, 'loss_unsafe_coef': 1.0, 'loss_safe_coef': 1.0, 'loss_h_dot_coef': 0.01, 'gnn_layers': 1, 'seed': 0, 'max_grad_norm': 2.0, 'horizon': 32}

@@ -1,0 +1,69 @@
+{
+  "os": "Linux-6.8.0-87-generic-x86_64-with-glibc2.35",
+  "python": "CPython 3.10.16",
+  "startedAt": "2025-11-07T19:53:52.160147Z",
+  "args": [
+    "--algo",
+    "gcbf+",
+    "--env",
+    "DoubleIntegrator",
+    "-n",
+    "8",
+    "--area-size",
+    "4",
+    "--loss-action-coef",
+    "1e-4",
+    "--n-env-train",
+    "4",
+    "--n-env-test",
+    "16",
+    "--lr-actor",
+    "1e-5",
+    "--lr-cbf",
+    "1e-5",
+    "--horizon",
+    "24",
+    "--steps",
+    "8000",
+    "--seed",
+    "1234",
+    "--save-interval",
+    "100"
+  ],
+  "program": "/home/tung656/MastersFiles/Y2/MAS_Simulations_mpc/train.py",
+  "codePath": "train.py",
+  "git": {
+    "remote": "https://github.com/MIT-REALM/gcbfplus.git",
+    "commit": "b6866cba5f4530431366614939fe1aa76bbce446"
+  },
+  "root": "./logs/DoubleIntegrator/gcbf+/seed1234_20251108035351",
+  "host": "tung656-Legion-R9000P-ARX8",
+  "executable": "/home/tung656/anaconda3/envs/gcbfplus/bin/python",
+  "codePathLocal": "train.py",
+  "cpu_count": 16,
+  "cpu_count_logical": 32,
+  "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+  "gpu_count": 1,
+  "disk": {
+    "/": {
+      "total": "273646493696",
+      "used": "177837395968"
+    }
+  },
+  "memory": {
+    "total": "16424878080"
+  },
+  "cpu": {
+    "count": 16,
+    "countLogical": 32
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "memoryTotal": "8585740288",
+      "cudaCores": 3072,
+      "architecture": "Ada"
+    }
+  ],
+  "cudaVersion": "12.4"
+}

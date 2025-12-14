@@ -1,0 +1,31 @@
+wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+
+curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+
+chmod +x Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh
+
+source ~/miniconda3/bin/activate
+
+conda create -n gcbfplus python=3.10.16
+conda activate gcbfplus
+
+pip install -r requirements.txt
+
+python --version
+pip list
+
+python train.py \
+  --algo gcbf+ \
+  --env DoubleIntegrator \
+  -n 16 \
+  --obs 16 \
+  --area-size 4 \
+  --loss-action-coef 1e-4 \
+  --n-env-train 8 \
+  --lr-actor 1e-5 \
+  --lr-cbf 1e-5 \
+  --horizon 24 \
+  --steps 3000 \
+  --seed 1234 \
+  --save-interval 20

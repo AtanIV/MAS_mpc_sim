@@ -1,0 +1,54 @@
+DubinsCar:
+  --env: DubinsCar            # Env name
+  --lr-actor: 3e-5            # Learning rates
+  --lr-cbf: 3e-5
+  --loss-action-coef: 1e-5    # Coefficient niu_ctrl as action deviation loss weight
+  --n-env-train: 16           # Number of parallel environment instances used during training
+  --horizon: 32               # Finite look‐ahead horizon T for approximately labeling safe and unsafe agents
+  --area-size: 4              # Size of workspace
+DoubleIntegrator:
+  --env: DoubleIntegrator
+  --lr-actor: 1e-5
+  --lr-cbf: 1e-5
+  --loss-action-coef: 1e-4
+  --n-env-train: 16
+  --horizon: 32
+  --area-size: 4
+DoubleIntegratorMPC:
+  --env: DoubleIntegratorMPC  # New MPC environment
+  --lr-actor: 1e-5
+  --lr-cbf: 1e-5
+  --loss-action-coef: 1e-4
+  --n-env-train: 16
+  --horizon: 32
+  --area-size: 4
+  # MPC-specific parameters
+  --mpc-horizon: 10           # MPC prediction horizon
+  --Q-mpc: 5.0               # State cost weight
+  --R-mpc: 1.0               # Input cost weight
+  --u-max: 1.0               # Maximum control input magnitude
+  --terminal-weight: 10.0     # Terminal state cost multiplier
+SingleIntegrator:
+  --env: SingleIntegrator
+  --lr-actor: 1e-5
+  --lr-cbf: 1e-5
+  --loss-action-coef: 1e-4
+  --n-env-train: 16
+  --horizon: 1
+  --area-size: 4
+LinearDrone:
+  --env: LinearDrone
+  --lr-actor: 1e-5
+  --lr-cbf: 1e-5
+  --loss-action-coef: 1e-3
+  --n-env-train: 16
+  --horizon: 32
+  --area-size: 2
+CrazyFlie:
+  --env: CrazyFlie
+  --lr-actor: 1e-5
+  --lr-cbf: 1e-4
+  --loss-action-coef: 3e-5
+  --n-env-train: 16
+  --horizon: 32
+  --area-size: 2
