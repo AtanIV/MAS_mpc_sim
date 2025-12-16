@@ -217,11 +217,46 @@ Plots solver iteration count and IPOPT status across steps.
 </div>
 
 ---
+## 🔧 Installing Requirements
+
+Create the following environment along with the required packages:
+
+```bash
+python test_ESO_NMPC_gcbf.py \
+  --gcbf-path logs/DoubleIntegrator/gcbf+/seed1234_20251130013419 \
+  --manual-scenario \
+  --epi 1 \
+  --max-step 400 \
+  --mass 0.1 \
+  --safety-margin 0.0 \
+  --mpc-horizon 3
+```
 
 ## 🚀 Running the Simulation
 
+### Train GCBF Model
+Train a GCBF model:
+
+```bash
+python train.py \
+  --algo gcbf+ \
+  --env DoubleIntegrator \
+  -n 8 \
+  --area-size 4 \
+  --loss-action-coef 1e-4 \
+  --n-env-train 4 \
+  --n-env-test 16 \
+  --lr-actor 1e-5 \
+  --lr-cbf 1e-5 \
+  --horizon 24 \
+  --steps 4000 \
+  --seed 1234 \
+  --save-interval 100
+```
+
+
 ### Manual Scenario
-Run a manually configured scenario with 1 episode:
+Run simulation with a manually configured scenario:
 
 ```bash
 python test_ESO_NMPC_gcbf.py \
@@ -235,7 +270,7 @@ python test_ESO_NMPC_gcbf.py \
 ```
 
 ### Random Scenario
-Run with random obstacle placement and multiple agents:
+Run simulation with random obstacle and agent placement:
 
 ```bash
 python test_ESO_NMPC_gcbf.py \
@@ -262,6 +297,7 @@ Visualize IPOPT iteration counts and solver status for specific agents:
 ```bash
 python -m analysis_debug.visualize_status_axis_ipopt \
   logs/eso_mpc_gcbf_results_lazy/1211-0240 \
+  --step-range 0 200 \
   --agents 0 1 2 3 4 5 \
   --combined \
   --show
@@ -271,10 +307,12 @@ python -m analysis_debug.visualize_status_axis_ipopt \
 
 View local subgraph evolution for a specific agent over time:
 
+Generates local graph images under logs/eso_mpc_gcbf_results/MMDD-HHMM/local_graph_logs/visualizations
+
 ```bash
 python -m analysis_debug.visualize_local_graphs \
   logs/eso_mpc_gcbf_results_lazy/1211-0240/local_graph_logs \
-  --agent 1 \
+  --agent 3 \
   --step-range 0 500 \
   --axis-mode fixed \
   --axis-limits -0 4 -0 4
@@ -284,9 +322,11 @@ python -m analysis_debug.visualize_local_graphs \
 
 View simulation results including mpc inputs, disturbance and agent trajectories:
 
+Generates full graph visualizations under logs/eso_mpc_gcbf_results/MMDD-HHMM/full_graph_logs/visualizations
+
 ```bash
-python python -m analysis_debug.visualize_full_graphs \
-  logs/eso_mpc_gcbf_results_lazy_manual/1210-0403/full_graph_logs \
+python -m analysis_debug.visualize_full_graphs \
+  logs/eso_mpc_gcbf_results_lazy/1211-0240/full_graph_logs \
   --episode 1 \
   --step-range 0 400 \
   --axis-mode fixed \
@@ -300,10 +340,10 @@ Perform offline ESO tuning on logged trajectories:
 
 ```bash
 python -m analysis_debug.ESO_tuning \
-  --log-dir logs/eso_mpc_gcbf_results_lazy_manual/1208-2309 \
-  --agent-id 0 \
+  --log-dir logs/eso_mpc_gcbf_results_lazy/1211-0240 \
+  --agent-id 4 \
   --episode 1 \
-  --axis y
+  --axis x
 ```
 
 Additional tuning runs:
