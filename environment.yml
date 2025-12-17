@@ -33,7 +33,8 @@ dependencies:
       - jaxproxqp @ git+https://github.com/oswinso/jaxproxqp.git@8b6d76028ef19642b9684a33584624295ea69128
       - pandas==2.2.3
       - psutil==6.1.0
-      - ImageIO==2.37.2
+      - imageio==2.37.2
+      - imageio-ffmpeg==0.6.0
       - cvxpy==1.6.6
       - clarabel==0.11.1
       - osqp==1.0.4

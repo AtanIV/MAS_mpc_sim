@@ -222,14 +222,10 @@ Plots solver iteration count and IPOPT status across steps.
 Create the following environment along with the required packages:
 
 ```bash
-python test_ESO_NMPC_gcbf.py \
-  --gcbf-path logs/DoubleIntegrator/gcbf+/seed1234_20251130013419 \
-  --manual-scenario \
-  --epi 1 \
-  --max-step 400 \
-  --mass 0.1 \
-  --safety-margin 0.0 \
-  --mpc-horizon 3
+# create the env from the yaml
+conda env create -f environment.yml
+# activate the environment
+conda activate ESOGCBFMPC
 ```
 
 ## 🚀 Running the Simulation
