@@ -92,24 +92,105 @@ class IpoptMPCProblem:
         self.n = x0.size
 
         # Probe once to get constraint size
-        g0 = self.ctrl.combined_constraints(x0)
+        # NOTE: if enable_reparameterization=True, IPOPT's x is w-space, but the
+        # controller constraints are written in u-space, so we must probe in u.
+        if self.ctrl.enable_reparameterization:
+            try:
+                import jax.numpy as jnp
+                u0 = np.array(self.ctrl._u_from_w(jnp.array(x0)), dtype=np.float64)
+            except Exception:
+                # fallback: many JAX funcs accept numpy arrays directly
+                u0 = np.array(self.ctrl._u_from_w(x0), dtype=np.float64)
+            g0 = self.ctrl.combined_constraints(u0)
+        else:
+            g0 = self.ctrl.combined_constraints(x0)
+
         self.m = g0.size
 
         self.iterations = 0  # will be updated by intermediate callback
 
+    # ---- helpers ----
+    def _u_from_x(self, x):
+        """
+        Interpret IPOPT variable x as either:
+          - u (enable_reparameterization == False)
+          - w (enable_reparameterization == True), then map to u via u = u(w)
+        Always returns float64 numpy array in u-space.
+        """
+        x = np.asarray(x, dtype=np.float64)
+
+        if self.ctrl.enable_reparameterization:
+            try:
+                import jax.numpy as jnp
+                u = self.ctrl._u_from_w(jnp.array(x))
+            except Exception:
+                u = self.ctrl._u_from_w(x)
+            return np.array(u, dtype=np.float64)
+
+        return x
+
+    def _jac_w_from_jac_u(self, jac_u, w):
+        """
+        Chain rule helper for w-space:
+          jac_w = jac_u * du/dw   (objective gradient)
+          J_w   = J_u * diag(du/dw) (constraint Jacobian; column scaling)
+        You already used ctrl._jac_w_to_jac_u(jac_u, w) in the SciPy wrappers,
+        so we reuse the same helper here for IPOPT.
+        """
+        try:
+            import jax.numpy as jnp
+            out = self.ctrl._jac_w_to_jac_u(jnp.array(jac_u), jnp.array(w))
+        except Exception:
+            out = self.ctrl._jac_w_to_jac_u(jac_u, w)
+        return np.array(out, dtype=np.float64)
+
     # ---- IPOPT callbacks ----
     def objective(self, x):
-        return float(self.ctrl.objective_function(np.array(x, dtype=np.float64)))
+        if self.ctrl.enable_reparameterization:
+            # x is w; evaluate objective in u-space
+            u = self._u_from_x(x)
+            return float(self.ctrl.objective_function(u))
+        else:
+            # x is u
+            return float(self.ctrl.objective_function(np.array(x, dtype=np.float64)))
 
     def gradient(self, x):
-        grad = self.ctrl.jacobian_objective(np.array(x, dtype=np.float64))
-        return np.array(grad, dtype=np.float64)
+        x = np.asarray(x, dtype=np.float64)
+
+        if self.ctrl.enable_reparameterization:
+            # x is w; compute dJ/dw via chain rule
+            w = x
+            u = self._u_from_x(w)
+            jac_u = self.ctrl.jacobian_objective(u)           # dJ/du
+            jac_w = self._jac_w_from_jac_u(jac_u, w)          # dJ/dw
+            return np.array(jac_w, dtype=np.float64)
+        else:
+            # x is u
+            grad = self.ctrl.jacobian_objective(np.array(x, dtype=np.float64))
+            return np.array(grad, dtype=np.float64)
 
     def constraints(self, x):
-        return self.ctrl.combined_constraints(np.array(x, dtype=np.float64))
+        if self.ctrl.enable_reparameterization:
+            # x is w; evaluate constraints in u-space
+            u = self._u_from_x(x)
+            return np.array(self.ctrl.combined_constraints(u), dtype=np.float64)
+        else:
+            # x is u
+            return self.ctrl.combined_constraints(np.array(x, dtype=np.float64))
 
     def jacobian(self, x):
-        return self.ctrl.combined_constraints_jacobian(np.array(x, dtype=np.float64))
+        x = np.asarray(x, dtype=np.float64)
+
+        if self.ctrl.enable_reparameterization:
+            # x is w; compute dc/dw via chain rule
+            w = x
+            u = self._u_from_x(w)
+            J_u = self.ctrl.combined_constraints_jacobian(u)  # dc/du
+            J_w = self._jac_w_from_jac_u(J_u, w)              # dc/dw
+            return np.array(J_w, dtype=np.float64).ravel()
+        else:
+            # x is u
+            return self.ctrl.combined_constraints_jacobian(np.array(x, dtype=np.float64))
 
     def jacobianstructure(self):
         # dense structure
@@ -751,6 +832,7 @@ class NLPMPCController:
         state_vals = np.array(self.state_constraint_function(decision_vector), dtype=np.float64)
 
         return np.concatenate([cbf_vals, state_vals], axis=0)
+        # return state_vals  # SOFT CBF via objective only
 
     def combined_constraints_jacobian(self, decision_vector: np.ndarray) -> np.ndarray:
         """
@@ -761,6 +843,7 @@ class NLPMPCController:
         J_state = np.array(self.state_constraint_jacobian(decision_vector), dtype=np.float64)  # (Ns, n)
 
         J = np.concatenate([J_cbf, J_state], axis=0)  # shape (m, n), m = Nc + Ns
+        # J = J_state  # SOFT CBF
         return J.ravel()  # IPOPT expects vectorized Jacobian
 
     # ===========================================================================================
@@ -981,6 +1064,7 @@ class NLPMPCController:
 
                 # constraints = [cbf_constraints, state_constraints]
                 constraints = [cbf_constraints]
+                # constraints = [] # SOFT CBF constraints instead
                 print("  ✓ CBF constraints only !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
                 bounds = None  # No box bounds in reparameterized formulation!
                 x0 = w_init
@@ -1231,6 +1315,17 @@ class NLPMPCController:
         else:
             initial_guess = np.array(initial_guess, dtype=np.float64)
 
+        # IPOPT decision variable x0:
+        #   - u-space if reparameterization is OFF
+        #   - w-space if reparameterization is ON
+        if self.enable_reparameterization:
+            # Convert initial guess u -> w for IPOPT
+            w_init = np.array(self._w_from_u(jnp.array(initial_guess)), dtype=np.float64)
+            w_init += 1e-6  # optional, same trick as SciPy
+            x0 = w_init
+        else:
+            x0 = np.array(initial_guess, dtype=np.float64)
+
         print(f"Initial guess shape: {initial_guess.shape}")
         print(f"Decision variables: {self.decision_vars}")
 
@@ -1242,8 +1337,8 @@ class NLPMPCController:
         print(f"    CBF constraints:   shape={cbf_test.shape},   min={np.min(cbf_test):.3f}")
 
         # dimensions
-        n = initial_guess.size
-        g0 = self.combined_constraints(initial_guess)
+        n = x0.size  # IMPORTANT: IPOPT variable size (u or w)
+        g0 = self.combined_constraints(initial_guess)  # IMPORTANT: constraints are defined in u-space
         m = g0.size
 
         # ------------------------------------------------------------------
@@ -1266,7 +1361,7 @@ class NLPMPCController:
         # ------------------------------------------------------------------
         # Build IPOPT problem
         # ------------------------------------------------------------------
-        nlp_obj = IpoptMPCProblem(self, initial_guess)
+        nlp_obj = IpoptMPCProblem(self, x0)
         nlp = cyipopt.Problem(
             n=n,
             m=m,
@@ -1305,7 +1400,7 @@ class NLPMPCController:
         # Solve
         # ------------------------------------------------------------------
         start_time = time.time()
-        x_opt, info = nlp.solve(initial_guess)
+        x_opt, info = nlp.solve(x0)
         solve_time = time.time() - start_time
 
         x_opt = np.array(x_opt, dtype=np.float64)
