@@ -76,7 +76,7 @@ Project/
 ### Implementation Layout
 
 <div align="center">
-    <img src="./media/ImplementationLayout2.png" alt="Implementation Layout" width="100%"/>
+    <img src="./media/ImplementationLayout.png" alt="Implementation Layout" width="100%"/>
 </div>
 
 ---
