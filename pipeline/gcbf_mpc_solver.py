@@ -92,42 +92,80 @@ class IpoptMPCProblem:
         self.n = x0.size
 
         # Probe once to get constraint size
-        # NOTE: if enable_reparameterization=True, IPOPT's x is w-space, but the
-        # controller constraints are written in u-space, so we must probe in u.
+        # If reparameterization is enabled, IPOPT's x0 is [w, s] but constraints are defined on [u, s]
         if self.ctrl.enable_reparameterization:
-            try:
-                import jax.numpy as jnp
-                u0 = np.array(self.ctrl._u_from_w(jnp.array(x0)), dtype=np.float64)
-            except Exception:
-                # fallback: many JAX funcs accept numpy arrays directly
-                u0 = np.array(self.ctrl._u_from_w(x0), dtype=np.float64)
-            g0 = self.ctrl.combined_constraints(u0)
+            w0 = np.array(x0[:self.ctrl.control_vars], dtype=np.float64)
+            s0 = np.array(x0[self.ctrl.control_vars:], dtype=np.float64) if getattr(self.ctrl, "enable_cbf_slack",
+                                                                                    False) else np.array([],
+                                                                                                         dtype=np.float64)
+            u0 = np.array(self.ctrl._u_from_w(jnp.array(w0)), dtype=np.float64)
+            u0_full = np.concatenate([u0, s0], axis=0) if getattr(self.ctrl, "enable_cbf_slack", False) else u0
+            g0 = self.ctrl.combined_constraints(u0_full)
         else:
             g0 = self.ctrl.combined_constraints(x0)
 
         self.m = g0.size
-
         self.iterations = 0  # will be updated by intermediate callback
 
     # ---- helpers ----
+    # def _u_from_x(self, x):
+    #     """
+    #     Interpret IPOPT variable x as either:
+    #       - u (enable_reparameterization == False)
+    #       - w (enable_reparameterization == True), then map to u via u = u(w)
+    #     Always returns float64 numpy array in u-space.
+    #     """
+    #     x = np.asarray(x, dtype=np.float64)
+    #
+    #     if self.ctrl.enable_reparameterization:
+    #         try:
+    #             import jax.numpy as jnp
+    #             u = self.ctrl._u_from_w(jnp.array(x))
+    #         except Exception:
+    #             u = self.ctrl._u_from_w(x)
+    #         return np.array(u, dtype=np.float64)
+    #
+    #     return x
+
     def _u_from_x(self, x):
         """
-        Interpret IPOPT variable x as either:
-          - u (enable_reparameterization == False)
-          - w (enable_reparameterization == True), then map to u via u = u(w)
-        Always returns float64 numpy array in u-space.
+        Interpret IPOPT variable x as:
+
+        - If enable_reparameterization == False:
+            x is already in u-space:
+              * without slack: x = [u]
+              * with slack:    x = [u, s]
+            Return x as float64.
+
+        - If enable_reparameterization == True:
+            IPOPT variable is:
+              * without slack: x = [w]
+              * with slack:    x = [w, s]
+            Map w -> u via u = u(w), and if slack exists, preserve it:
+              return [u, s]
         """
         x = np.asarray(x, dtype=np.float64)
 
-        if self.ctrl.enable_reparameterization:
-            try:
-                import jax.numpy as jnp
-                u = self.ctrl._u_from_w(jnp.array(x))
-            except Exception:
-                u = self.ctrl._u_from_w(x)
-            return np.array(u, dtype=np.float64)
+        # No reparameterization: IPOPT already works in u-space (and slacks, if any)
+        if not getattr(self.ctrl, "enable_reparameterization", False):
+            return x
 
-        return x
+        # Reparameterization ON: x is [w] or [w, s]
+        ctrl_n = int(getattr(self.ctrl, "control_vars", x.size))
+
+        w = x[:ctrl_n]
+        has_slack = bool(getattr(self.ctrl, "enable_cbf_slack", False))
+        s = x[ctrl_n:] if has_slack else np.array([], dtype=np.float64)
+
+        # Map w -> u (JAX-friendly)
+        try:
+            u = self.ctrl._u_from_w(jnp.array(w))
+        except Exception:
+            u = self.ctrl._u_from_w(w)
+
+        u = np.asarray(u, dtype=np.float64)
+
+        return np.concatenate([u, s], axis=0) if has_slack else u
 
     def _jac_w_from_jac_u(self, jac_u, w):
         """
@@ -146,51 +184,77 @@ class IpoptMPCProblem:
 
     # ---- IPOPT callbacks ----
     def objective(self, x):
+        x = np.array(x, dtype=np.float64)
+
         if self.ctrl.enable_reparameterization:
-            # x is w; evaluate objective in u-space
-            u = self._u_from_x(x)
-            return float(self.ctrl.objective_function(u))
-        else:
-            # x is u
-            return float(self.ctrl.objective_function(np.array(x, dtype=np.float64)))
+            w = x[:self.ctrl.control_vars]
+            s = x[self.ctrl.control_vars:] if getattr(self.ctrl, "enable_cbf_slack", False) else np.array([], dtype=np.float64)
+            u = np.array(self.ctrl._u_from_w(jnp.array(w)), dtype=np.float64)
+            u_full = np.concatenate([u, s], axis=0) if getattr(self.ctrl, "enable_cbf_slack", False) else u
+            return float(self.ctrl.objective_function(u_full))
+
+        return float(self.ctrl.objective_function(x))
 
     def gradient(self, x):
-        x = np.asarray(x, dtype=np.float64)
+        x = np.array(x, dtype=np.float64)
 
         if self.ctrl.enable_reparameterization:
-            # x is w; compute dJ/dw via chain rule
-            w = x
-            u = self._u_from_x(w)
-            jac_u = self.ctrl.jacobian_objective(u)           # dJ/du
-            jac_w = self._jac_w_from_jac_u(jac_u, w)          # dJ/dw
-            return np.array(jac_w, dtype=np.float64)
-        else:
-            # x is u
-            grad = self.ctrl.jacobian_objective(np.array(x, dtype=np.float64))
-            return np.array(grad, dtype=np.float64)
+            w = x[:self.ctrl.control_vars]
+            s = x[self.ctrl.control_vars:] if getattr(self.ctrl, "enable_cbf_slack", False) else np.array([], dtype=np.float64)
+
+            u = np.array(self.ctrl._u_from_w(jnp.array(w)), dtype=np.float64)
+            u_full = np.concatenate([u, s], axis=0) if getattr(self.ctrl, "enable_cbf_slack", False) else u
+
+            grad_u_full = np.array(self.ctrl.jacobian_objective(u_full), dtype=np.float64)
+
+            # Chain rule only for control block: dJ/dw = dJ/du * du/dw
+            # du/dw from your helper (works for vectors)
+            grad_u_controls = grad_u_full[:self.ctrl.control_vars]
+            grad_w_controls = np.array(self.ctrl._jac_w_to_jac_u(jnp.array(grad_u_controls), jnp.array(w)), dtype=np.float64)
+
+            if getattr(self.ctrl, "enable_cbf_slack", False):
+                grad_s = grad_u_full[self.ctrl.control_vars:]
+                return np.concatenate([grad_w_controls, grad_s], axis=0)
+
+            return grad_w_controls
+
+        grad = self.ctrl.jacobian_objective(x)
+        return np.array(grad, dtype=np.float64)
 
     def constraints(self, x):
+        x = np.array(x, dtype=np.float64)
+
         if self.ctrl.enable_reparameterization:
-            # x is w; evaluate constraints in u-space
-            u = self._u_from_x(x)
-            return np.array(self.ctrl.combined_constraints(u), dtype=np.float64)
-        else:
-            # x is u
-            return self.ctrl.combined_constraints(np.array(x, dtype=np.float64))
+            w = x[:self.ctrl.control_vars]
+            s = x[self.ctrl.control_vars:] if getattr(self.ctrl, "enable_cbf_slack", False) else np.array([], dtype=np.float64)
+            u = np.array(self.ctrl._u_from_w(jnp.array(w)), dtype=np.float64)
+            u_full = np.concatenate([u, s], axis=0) if getattr(self.ctrl, "enable_cbf_slack", False) else u
+            return np.array(self.ctrl.combined_constraints(u_full), dtype=np.float64)
+
+        return np.array(self.ctrl.combined_constraints(x), dtype=np.float64)
 
     def jacobian(self, x):
-        x = np.asarray(x, dtype=np.float64)
+        x = np.array(x, dtype=np.float64)
 
         if self.ctrl.enable_reparameterization:
-            # x is w; compute dc/dw via chain rule
-            w = x
-            u = self._u_from_x(w)
-            J_u = self.ctrl.combined_constraints_jacobian(u)  # dc/du
-            J_w = self._jac_w_from_jac_u(J_u, w)              # dc/dw
-            return np.array(J_w, dtype=np.float64).ravel()
-        else:
-            # x is u
-            return self.ctrl.combined_constraints_jacobian(np.array(x, dtype=np.float64))
+            w = x[:self.ctrl.control_vars]
+            s = x[self.ctrl.control_vars:] if getattr(self.ctrl, "enable_cbf_slack", False) else np.array([], dtype=np.float64)
+
+            u = np.array(self.ctrl._u_from_w(jnp.array(w)), dtype=np.float64)
+            u_full = np.concatenate([u, s], axis=0) if getattr(self.ctrl, "enable_cbf_slack", False) else u
+
+            # Get Jacobian wrt [u, s] (flattened), reshape to (m, n) before scaling!
+            J_u_flat = np.array(self.ctrl.combined_constraints_jacobian(u_full), dtype=np.float64)
+            J_u = J_u_flat.reshape((self.m, self.n))
+
+            # Scale ONLY the control columns by du/dw; slack columns unchanged
+            du_dw = np.array(self.ctrl.saturation_margin * self.ctrl.control_bounds[1] * (1.0 - np.tanh(w) ** 2), dtype=np.float64)  # (control_vars,)
+            J_u[:, :self.ctrl.control_vars] *= du_dw[None, :]
+
+            return J_u.ravel()
+
+        J = np.array(self.ctrl.combined_constraints_jacobian(x), dtype=np.float64)
+        return J.ravel()
 
     def jacobianstructure(self):
         # dense structure
@@ -365,7 +429,16 @@ class NLPMPCController:
 
         # Initialize optimization variables
         self.control_dim = 2
-        self.decision_vars = horizon * self.control_dim
+
+        # --- Slack relaxation for CBF (soft feasibility) ---
+        self.enable_cbf_slack = True  # toggle this if you want hard CBF again
+        self.cbf_slack_l1_weight = 100.0  # start 1e1–1e3 depending on scale
+        self.cbf_slack_weight = 1e4  # tune: 1e3–1e6 typical
+        # ---------------------------------------------------
+
+        self.control_vars = horizon * self.control_dim  # only controls
+        self.cbf_slack_vars = horizon if self.enable_cbf_slack else 0  # one slack per CBF step
+        self.decision_vars = self.control_vars + self.cbf_slack_vars  # optimizer variable length
 
         # Extract initial ego state
         agent_states = initial_graph.type_states(type_idx=0, n_type=self.graph_info['agent_nodes'])
@@ -663,10 +736,24 @@ class NLPMPCController:
         return base ** self.g_power
     # ============================h cost helpers===================================
 
+    def _split_decision(self, decision_vector: np.ndarray):
+        """Split z = [u_flat, s] where s are CBF slacks."""
+        z = np.asarray(decision_vector, dtype=np.float64)
+
+        u_flat = z[:self.control_vars]
+
+        if self.enable_cbf_slack:
+            s = z[self.control_vars:self.control_vars + self.cbf_slack_vars]
+        else:
+            s = None
+
+        return u_flat, s
 
     def extract_control_sequence(self, decision_vector: np.ndarray) -> np.ndarray:
         """Extract control sequence from decision vector."""
-        return decision_vector.reshape((self.horizon, self.control_dim))
+        # return decision_vector.reshape((self.horizon, self.control_dim)) # without slack
+        u_flat, _ = self._split_decision(decision_vector)
+        return u_flat.reshape((self.horizon, self.control_dim))
 
     def predict_ego_trajectory(self, control_sequence: np.ndarray) -> np.ndarray:
         """Predict trajectory - numpy interface."""
@@ -674,31 +761,87 @@ class NLPMPCController:
         trajectory_jax = self.predict_ego_trajectory_jax(control_jax)
         return np.array(trajectory_jax)
 
+    # def objective_function(self, decision_vector: np.ndarray) -> float:
+    #     try:
+    #         control_jax = jnp.array(decision_vector.reshape((self.horizon, self.control_dim)))
+    #         base_cost = float(self.objective_jax(control_jax))
+    #         cbf_pen = self._cbf_soft_penalty_value(decision_vector)
+    #         cbf_pen = 0 # remove cbf pen for now
+    #         return base_cost + self.cbf_soft_weight * cbf_pen
+    #     except Exception as e:
+    #         print(f"    Error in objective function: {e}")
+    #         return 1e6
+
     def objective_function(self, decision_vector: np.ndarray) -> float:
         try:
-            control_jax = jnp.array(decision_vector.reshape((self.horizon, self.control_dim)))
+            u_flat, s = self._split_decision(decision_vector)
+            control_jax = jnp.array(u_flat.reshape((self.horizon, self.control_dim)))
             base_cost = float(self.objective_jax(control_jax))
-            cbf_pen = self._cbf_soft_penalty_value(decision_vector)
-            cbf_pen = 0 # remove cbf pen for now
-            return base_cost + self.cbf_soft_weight * cbf_pen
+
+            # Slack cost
+            slack_cost = 0.0
+            if self.enable_cbf_slack and s is not None:
+                slack_cost = float(
+                    self.cbf_slack_l1_weight * np.sum(s) +
+                    self.cbf_slack_weight * np.sum(np.square(s))
+                )
+
+            # Keep your old cbf_pen hook (still off by default)
+            # cbf_pen = self._cbf_soft_penalty_value(u_flat)
+            cbf_pen = 0.0 # remove cbf pen for now
+
+            return base_cost + slack_cost + self.cbf_soft_weight * cbf_pen
+
         except Exception as e:
             print(f"    Error in objective function: {e}")
             return 1e6
 
+    # def jacobian_objective(self, decision_vector: np.ndarray) -> np.ndarray:
+    #     try:
+    #         control_jax = jnp.array(decision_vector.reshape((self.horizon, self.control_dim)))
+    #         base_grad = np.array(self.objective_grad_jax(control_jax)).flatten()
+    #         cbf_grad = self._cbf_soft_penalty_grad(decision_vector)
+    #         return base_grad + self.cbf_soft_weight * cbf_grad
+    #     except Exception as e:
+    #         print(f"    Error computing objective Jacobian: {e}")
+    #         return np.zeros_like(decision_vector)
+
     def jacobian_objective(self, decision_vector: np.ndarray) -> np.ndarray:
         try:
-            control_jax = jnp.array(decision_vector.reshape((self.horizon, self.control_dim)))
-            base_grad = np.array(self.objective_grad_jax(control_jax)).flatten()
-            cbf_grad = self._cbf_soft_penalty_grad(decision_vector)
-            return base_grad + self.cbf_soft_weight * cbf_grad
+            u_flat, s = self._split_decision(decision_vector)
+
+            control_jax = jnp.array(u_flat.reshape((self.horizon, self.control_dim)))
+            base_grad_u = np.array(self.objective_grad_jax(control_jax)).flatten()  # (control_vars,)
+
+            # Optional old cbf grad hook (still off by default)
+            cbf_grad_u = np.zeros_like(base_grad_u)
+            # cbf_grad_u = self._cbf_soft_penalty_grad(u_flat)
+
+            grad_u = base_grad_u + self.cbf_soft_weight * cbf_grad_u
+
+            if self.enable_cbf_slack:
+                grad_s = np.zeros(self.cbf_slack_vars, dtype=np.float64)
+                if s is not None:
+                    grad_s = (
+                            self.cbf_slack_l1_weight * np.ones_like(s, dtype=np.float64) +
+                            2.0 * self.cbf_slack_weight * s.astype(np.float64)
+                    )
+                return np.concatenate([grad_u, grad_s], axis=0)
+
+            return grad_u
+
         except Exception as e:
             print(f"    Error computing objective Jacobian: {e}")
-            return np.zeros_like(decision_vector)
+            return np.zeros_like(decision_vector, dtype=np.float64)
 
     def state_constraint_function(self, decision_vector: np.ndarray) -> np.ndarray:
         """Vectorized state constraint function."""
         try:
-            control_jax = jnp.array(decision_vector.reshape((self.horizon, self.control_dim)))
+            # control_jax = jnp.array(decision_vector.reshape((self.horizon, self.control_dim)))
+            # constraints = self.state_constraints_jax(control_jax)
+            # return np.array(constraints)
+            u_flat, _ = self._split_decision(decision_vector)
+            control_jax = jnp.array(u_flat.reshape((self.horizon, self.control_dim)))
             constraints = self.state_constraints_jax(control_jax)
             return np.array(constraints)
         except Exception as e:
@@ -708,7 +851,11 @@ class NLPMPCController:
     def state_constraint_jacobian(self, decision_vector: np.ndarray) -> np.ndarray:
         """State constraint Jacobian."""
         try:
-            decision_jax = jnp.array(decision_vector)
+            # decision_jax = jnp.array(decision_vector)
+            # jacobian = self.state_constraints_jac_flat_jax(decision_jax)
+            # return np.array(jacobian)
+            u_flat, _ = self._split_decision(decision_vector)
+            decision_jax = jnp.array(u_flat)
             jacobian = self.state_constraints_jac_flat_jax(decision_jax)
             return np.array(jacobian)
         except Exception as e:
@@ -761,90 +908,224 @@ class NLPMPCController:
             print(f"    Error in CBF constraint evaluation: {e}")
             return np.full(self.horizon, -1000.0)
 
+    # def constraint_jacobian(self, decision_vector: np.ndarray) -> np.ndarray:
+    #     """PURE JAX AUTODIFF: CBF constraint Jacobian - NO finite differences."""
+    #     try:
+    #
+    #         control_sequence = self.extract_control_sequence(decision_vector)
+    #
+    #         # Pre-compute graphs and ego states (not differentiable)
+    #         predicted_graphs = self.graph_predictor.predict_graphs_horizon(
+    #             self.initial_graph, control_sequence
+    #         )
+    #
+    #         if len(predicted_graphs) == 0:
+    #             return np.zeros((self.horizon, len(decision_vector)))
+    #
+    #         all_graphs = [self.initial_graph] + predicted_graphs
+    #
+    #         # Pre-compute all ego states for the horizon
+    #         all_ego_states = []
+    #         for i in range(self.horizon):
+    #             if i < len(all_graphs):
+    #                 graph = all_graphs[i]
+    #                 agent_states = graph.type_states(type_idx=0, n_type=self.graph_info['agent_nodes'])
+    #                 ego_state = agent_states[0] if len(agent_states) > 0 else jnp.zeros(4)
+    #                 all_ego_states.append(ego_state)
+    #             else:
+    #                 all_ego_states.append(jnp.zeros(4))
+    #
+    #         # Convert decision vector to JAX array
+    #         decision_jax = jnp.array(decision_vector)
+    #
+    #         # Create JAX-differentiable function for each constraint
+    #         jacobian_rows = []
+    #
+    #         for i in range(self.horizon):
+    #             if i < len(all_graphs):
+    #                 graph = all_graphs[i]
+    #                 ego_state = all_ego_states[i]
+    #
+    #                 def constraint_func_single(controls_flat, step_idx=i):
+    #                     controls = controls_flat.reshape((self.horizon, self.control_dim))
+    #                     control_step = controls[step_idx]
+    #                     return self.cbf_constraint_single_step(jnp.array(ego_state), control_step, graph)
+    #
+    #                 # Compute gradient for this constraint
+    #                 grad_func = jax.grad(constraint_func_single)
+    #                 gradient = grad_func(decision_jax)
+    #                 jacobian_rows.append(np.array(gradient))
+    #             else:
+    #                 # Constraint doesn't exist - zero gradient
+    #                 jacobian_rows.append(np.zeros(len(decision_vector)))
+    #
+    #         # Stack all gradients to form Jacobian matrix
+    #         jacobian = np.stack(jacobian_rows, axis=0)
+    #         return jacobian
+    #
+    #     except Exception as e:
+    #         print(f"    Error computing CBF constraint Jacobian with JAX autodiff: {e}")
+    #         print(f"    No finite difference fallback available")
+    #         # No fallback - fail fast to identify issues
+    #         raise RuntimeError(f"CBF constraint JAX autodiff failed: {e}")
+
     def constraint_jacobian(self, decision_vector: np.ndarray) -> np.ndarray:
-        """PURE JAX AUTODIFF: CBF constraint Jacobian - NO finite differences."""
+        """
+        PURE JAX AUTODIFF: CBF constraint Jacobian - NO finite differences.
+        IMPORTANT (Slack relaxation compatibility):
+          - decision_vector may be full z = [u_flat, s] if slack is enabled.
+          - CBF constraints depend ONLY on controls u, NOT on slack s.
+          - Therefore we differentiate w.r.t. u_flat (length = self.control_vars) only,
+            and return shape (Nc, self.control_vars).
+          - Slack columns are added later in combined_constraints_jacobian() as an identity block.
+        """
         try:
+            # ---- Controls-only view (ignore slack variables) ----
+            u_flat, _ = self._split_decision(decision_vector)
+
+            # This uses extract_control_sequence(), which we updated to reshape only controls.
             control_sequence = self.extract_control_sequence(decision_vector)
 
-            # Pre-compute graphs and ego states (not differentiable)
+            # Predict future graphs over horizon (one per step)
             predicted_graphs = self.graph_predictor.predict_graphs_horizon(
-                self.initial_graph, control_sequence
+                self.initial_graph,
+                control_sequence,
             )
 
-            if len(predicted_graphs) == 0:
-                return np.zeros((self.horizon, len(decision_vector)))
+            # If graph prediction failed, return safe-sized zeros (controls-only)
+            if predicted_graphs is None or len(predicted_graphs) == 0:
+                return np.zeros((self.horizon, self.control_vars), dtype=np.float64)
 
-            all_graphs = [self.initial_graph] + predicted_graphs
+            # Always include initial graph as step 0 (matches your constraint_function)
+            all_graphs = [self.initial_graph] + list(predicted_graphs)
 
-            # Pre-compute all ego states for the horizon
+            # Pre-compute ego states for each step to avoid tracing graph ops inside grad
             all_ego_states = []
             for i in range(self.horizon):
                 if i < len(all_graphs):
                     graph = all_graphs[i]
-                    agent_states = graph.type_states(type_idx=0, n_type=self.graph_info['agent_nodes'])
-                    ego_state = agent_states[0] if len(agent_states) > 0 else jnp.zeros(4)
+                    try:
+                        agent_states = graph.type_states(type_idx=0, n_type=self.graph_info['agent_nodes'])
+                        ego_state = agent_states[0] if len(agent_states) > 0 else jnp.zeros(4)
+                    except Exception:
+                        ego_state = jnp.zeros(4)
                     all_ego_states.append(ego_state)
                 else:
                     all_ego_states.append(jnp.zeros(4))
 
-            # Convert decision vector to JAX array
-            decision_jax = jnp.array(decision_vector)
+            # Differentiate w.r.t controls only (length = control_vars)
+            decision_jax = jnp.array(u_flat)
 
-            # Create JAX-differentiable function for each constraint
             jacobian_rows = []
 
             for i in range(self.horizon):
                 if i < len(all_graphs):
-                    graph = all_graphs[i]
-                    ego_state = all_ego_states[i]
+                    graph_i = all_graphs[i]
+                    ego_state_i = all_ego_states[i]
 
-                    def constraint_func_single(controls_flat, step_idx=i):
+                    # scalar constraint at step i; takes the full u_flat (all horizon controls)
+                    def constraint_func_single(controls_flat, step_idx=i, g=graph_i, ego=ego_state_i):
                         controls = controls_flat.reshape((self.horizon, self.control_dim))
                         control_step = controls[step_idx]
-                        return self.cbf_constraint_single_step(jnp.array(ego_state), control_step, graph)
+                        # must return a scalar (cbf inequality value for that step)
+                        return self.cbf_constraint_single_step(jnp.array(ego), control_step, g)
 
-                    # Compute gradient for this constraint
                     grad_func = jax.grad(constraint_func_single)
-                    gradient = grad_func(decision_jax)
-                    jacobian_rows.append(np.array(gradient))
+                    gradient = grad_func(decision_jax)  # shape (control_vars,)
+                    jacobian_rows.append(np.array(gradient, dtype=np.float64))
                 else:
-                    # Constraint doesn't exist - zero gradient
-                    jacobian_rows.append(np.zeros(len(decision_vector)))
+                    # If graph missing for this step, row is zeros (controls-only)
+                    jacobian_rows.append(np.zeros(self.control_vars, dtype=np.float64))
 
-            # Stack all gradients to form Jacobian matrix
-            jacobian = np.stack(jacobian_rows, axis=0)
+            jacobian = np.stack(jacobian_rows, axis=0).astype(np.float64)
+
+            # Final shape: (Nc, control_vars). Typically Nc == horizon in your code.
             return jacobian
 
         except Exception as e:
             print(f"    Error computing CBF constraint Jacobian with JAX autodiff: {e}")
             print(f"    No finite difference fallback available")
-            # No fallback - fail fast to identify issues
             raise RuntimeError(f"CBF constraint JAX autodiff failed: {e}")
+
+    # def combined_constraints(self, decision_vector: np.ndarray) -> np.ndarray:
+    #     """
+    #     Combine CBF and state constraints into a single vector g(x).
+    #     IPOPT will enforce: cl <= g(x) <= cu.
+    #     We will set cl = 0, cu = +inf (i.e. all constraints ≥ 0).
+    #     """
+    #     # Make sure we get numpy arrays of float64
+    #     cbf_vals = np.array(self.constraint_function(decision_vector), dtype=np.float64)
+    #     state_vals = np.array(self.state_constraint_function(decision_vector), dtype=np.float64)
+    #
+    #     return np.concatenate([cbf_vals, state_vals], axis=0)
+    #     # return state_vals  # SOFT CBF via objective only
 
     def combined_constraints(self, decision_vector: np.ndarray) -> np.ndarray:
         """
         Combine CBF and state constraints into a single vector g(x).
         IPOPT will enforce: cl <= g(x) <= cu.
         We will set cl = 0, cu = +inf (i.e. all constraints ≥ 0).
+
+        Slack-relaxed CBF (if enabled):
+            g_cbf(u) + s >= 0,  s >= 0
         """
-        # Make sure we get numpy arrays of float64
-        cbf_vals = np.array(self.constraint_function(decision_vector), dtype=np.float64)
-        state_vals = np.array(self.state_constraint_function(decision_vector), dtype=np.float64)
+        u_flat, s = self._split_decision(decision_vector)
+
+        cbf_vals = np.array(self.constraint_function(u_flat), dtype=np.float64)
+        state_vals = np.array(self.state_constraint_function(u_flat), dtype=np.float64)
+
+        if getattr(self, "enable_cbf_slack", False) and (s is not None):
+            cbf_vals = cbf_vals + s
 
         return np.concatenate([cbf_vals, state_vals], axis=0)
-        # return state_vals  # SOFT CBF via objective only
+
+    # def combined_constraints_jacobian(self, decision_vector: np.ndarray) -> np.ndarray:
+    #     """
+    #     Stack the Jacobians of [CBF; state] constraints.
+    #     Returns a flattened 1D array as IPOPT expects.
+    #     """
+    #     J_cbf = np.array(self.constraint_jacobian(decision_vector), dtype=np.float64)  # (Nc, n)
+    #     J_state = np.array(self.state_constraint_jacobian(decision_vector), dtype=np.float64)  # (Ns, n)
+    #
+    #     J = np.concatenate([J_cbf, J_state], axis=0)  # shape (m, n), m = Nc + Ns
+    #     # J = J_state  # SOFT CBF
+    #     return J.ravel()  # IPOPT expects vectorized Jacobian
 
     def combined_constraints_jacobian(self, decision_vector: np.ndarray) -> np.ndarray:
         """
         Stack the Jacobians of [CBF; state] constraints.
         Returns a flattened 1D array as IPOPT expects.
-        """
-        J_cbf = np.array(self.constraint_jacobian(decision_vector), dtype=np.float64)  # (Nc, n)
-        J_state = np.array(self.state_constraint_jacobian(decision_vector), dtype=np.float64)  # (Ns, n)
 
-        J = np.concatenate([J_cbf, J_state], axis=0)  # shape (m, n), m = Nc + Ns
-        # J = J_state  # SOFT CBF
-        return J.ravel()  # IPOPT expects vectorized Jacobian
+        IMPORTANT:
+        - constraint_jacobian(u) and state_constraint_jacobian(u) must return Jacobians
+          w.r.t. CONTROLS ONLY (shape (Nc, control_vars) and (Ns, control_vars)).
+        - Slack columns are added here as [I; 0].
+        """
+        u_flat, _ = self._split_decision(decision_vector)
+
+        J_cbf_u = np.array(self.constraint_jacobian(u_flat), dtype=np.float64)  # (Nc, control_vars)
+        J_state_u = np.array(self.state_constraint_jacobian(u_flat), dtype=np.float64)  # (Ns, control_vars)
+
+        if getattr(self, "enable_cbf_slack", False):
+            Nc = J_cbf_u.shape[0]
+            Ns = J_state_u.shape[0]
+            slack_vars = int(getattr(self, "cbf_slack_vars", 0))
+
+            I = np.eye(Nc, dtype=np.float64)  # d(cbf+s)/ds = I  (Nc, Nc) when slack_vars==Nc
+            if slack_vars != Nc:
+                # If you choose a different slack dimension later, keep it consistent here
+                I = np.eye(Nc, slack_vars, dtype=np.float64)
+
+            Z = np.zeros((Ns, slack_vars), dtype=np.float64)
+
+            top = np.concatenate([J_cbf_u, I], axis=1)  # (Nc, control+slack)
+            bot = np.concatenate([J_state_u, Z], axis=1)  # (Ns, control+slack)
+            J = np.concatenate([top, bot], axis=0)  # (m, decision_vars)
+            return J.ravel()
+
+        J = np.concatenate([J_cbf_u, J_state_u], axis=0)
+        # J = J_state_u  # SOFT CBF
+        return J.ravel()
 
     # ===========================================================================================
     def _cbf_soft_penalty_value(self, decision_vector: np.ndarray) -> float:
@@ -1315,16 +1596,26 @@ class NLPMPCController:
         else:
             initial_guess = np.array(initial_guess, dtype=np.float64)
 
-        # IPOPT decision variable x0:
-        #   - u-space if reparameterization is OFF
-        #   - w-space if reparameterization is ON
+        # If caller provided only control initial guess, append zero slacks
+        if getattr(self, "enable_cbf_slack", False) and (initial_guess.size == self.control_vars):
+            initial_guess = np.concatenate(
+                [initial_guess, np.zeros(self.cbf_slack_vars, dtype=np.float64)],
+                axis=0
+            )
+
+        # IPOPT variable x0:
+        #   - u-space if reparameterization is OFF: x = [u, s]
+        #   - w-space if reparameterization is ON:  x = [w, s]
         if self.enable_reparameterization:
-            # Convert initial guess u -> w for IPOPT
-            w_init = np.array(self._w_from_u(jnp.array(initial_guess)), dtype=np.float64)
-            w_init += 1e-6  # optional, same trick as SciPy
-            x0 = w_init
+            u0 = initial_guess[:self.control_vars]
+            s0 = initial_guess[self.control_vars:] if getattr(self, "enable_cbf_slack", False) else np.array([],
+                                                                                                             dtype=np.float64)
+
+            w_init = np.array(self._w_from_u(jnp.array(u0)), dtype=np.float64)
+            w_init += 1e-6
+            x0 = np.concatenate([w_init, s0], axis=0) if getattr(self, "enable_cbf_slack", False) else w_init
         else:
-            x0 = np.array(initial_guess, dtype=np.float64)
+            x0 = initial_guess
 
         print(f"Initial guess shape: {initial_guess.shape}")
         print(f"Decision variables: {self.decision_vars}")
@@ -1337,22 +1628,34 @@ class NLPMPCController:
         print(f"    CBF constraints:   shape={cbf_test.shape},   min={np.min(cbf_test):.3f}")
 
         # dimensions
-        n = x0.size  # IMPORTANT: IPOPT variable size (u or w)
-        g0 = self.combined_constraints(initial_guess)  # IMPORTANT: constraints are defined in u-space
+        n = x0.size  # IPOPT variable size (u or w)
+        g0 = self.combined_constraints(initial_guess)  # constraints are defined in u-space
         m = g0.size
 
         # ------------------------------------------------------------------
         # Decision variable bounds (same as your SciPy setup)
         # ------------------------------------------------------------------
         if self.enable_reparameterization:
-            # in w-space, no box bounds
+            # x = [w, s] : w unbounded, s >= 0
             lbx = -np.inf * np.ones(n, dtype=np.float64)
             ubx = np.inf * np.ones(n, dtype=np.float64)
+
+            if getattr(self, "enable_cbf_slack", False):
+                lbx[self.control_vars:self.control_vars + self.cbf_slack_vars] = 0.0
         else:
-            # u-space: use control_bounds per component
+            # x = [u, s] : u bounded, s >= 0
             u_low, u_high = self.control_bounds
-            lbx = np.tile(np.array(u_low, dtype=np.float64), self.horizon)
-            ubx = np.tile(np.array(u_high, dtype=np.float64), self.horizon)
+            lbx_u = np.tile(np.array(u_low, dtype=np.float64), self.horizon)
+            ubx_u = np.tile(np.array(u_high, dtype=np.float64), self.horizon)
+
+            if getattr(self, "enable_cbf_slack", False):
+                lbx_s = np.zeros(self.cbf_slack_vars, dtype=np.float64)
+                ubx_s = np.inf * np.ones(self.cbf_slack_vars, dtype=np.float64)
+                lbx = np.concatenate([lbx_u, lbx_s], axis=0)
+                ubx = np.concatenate([ubx_u, ubx_s], axis=0)
+            else:
+                lbx = lbx_u
+                ubx = ubx_u
 
         # Constraint bounds: all >= 0
         cl = np.zeros(m, dtype=np.float64)
@@ -1401,13 +1704,20 @@ class NLPMPCController:
         # ------------------------------------------------------------------
         start_time = time.time()
         x_opt, info = nlp.solve(x0)
+        print("[IPOPT info]", info)
         solve_time = time.time() - start_time
 
         x_opt = np.array(x_opt, dtype=np.float64)
 
         # If using reparameterization, map w → u
         if self.enable_reparameterization:
-            u_opt = np.array(self._u_from_w(jnp.array(x_opt)), dtype=np.float64)
+            w_opt = x_opt[:self.control_vars]
+            s_opt = x_opt[self.control_vars:] if getattr(self, "enable_cbf_slack", False) else np.array([],
+                                                                                                        dtype=np.float64)
+
+            u_controls = np.array(self._u_from_w(jnp.array(w_opt)), dtype=np.float64)
+            u_opt = np.concatenate([u_controls, s_opt], axis=0) if getattr(self, "enable_cbf_slack",
+                                                                           False) else u_controls
         else:
             u_opt = x_opt
 
@@ -1614,11 +1924,54 @@ class NLPMPCController:
         print(f"Min state constraint: {min_state_constraint:.6f}")
         print(f"Overall min constraint: {min_constraint:.6f}")
 
+        # ------------------------------------------------------------------
+        # Extract slack (relaxation) vector s_opt (one per horizon step)
+        # ------------------------------------------------------------------
+        s_opt = None
+        if getattr(self, "enable_cbf_slack", False):
+            decision_vec = u_opt
+            try:
+                _, s_opt = self._split_decision(decision_vec)
+                if s_opt is not None:
+                    s_opt = np.asarray(s_opt, dtype=np.float64).reshape(-1)
+            except Exception as e:
+                print(f"[IPOPT DEBUG] Failed to extract slack s from decision vector: {e}")
+                s_opt = None
+
         if success:
             # Print optimal control sequence (like old code)
             print(f"\n--- OPTIMAL CONTROL SEQUENCE (IPOPT) ---")
             for i, control in enumerate(optimal_control):
                 print(f"Step {i}: u = [{control[0]:.4f}, {control[1]:.4f}] (force)")
+
+                # ------------------------------------------------------------------
+                # Print slack (relaxation) per step + summary stats
+                # ------------------------------------------------------------------
+                if getattr(self, "enable_cbf_slack", False):
+                    print(f"\n--- CBF SLACK (RELAXATION) OVER HORIZON (IPOPT) ---")
+                    if s_opt is None:
+                        print("  (no slack extracted)")
+                    else:
+                        for i, si in enumerate(s_opt):
+                            active = "ACTIVE" if si > 1e-6 else ""
+                            print(f"Step {i}: s = {si:.6e} {active}")
+
+                        print(
+                            f"Slack stats: max={float(np.max(s_opt)):.3e}, "
+                            f"mean={float(np.mean(s_opt)):.3e}, "
+                            f"sum={float(np.sum(s_opt)):.3e}, "
+                            f"l2={float(np.linalg.norm(s_opt)):.3e}"
+                        )
+
+                        # Optional: compare base vs relaxed CBF residuals
+                        # (Your 'cbf_constraint_vals' is already relaxed because combined_constraints adds +s)
+                        try:
+                            cbf_base = np.asarray(self.constraint_function(u_opt), dtype=np.float64).reshape(-1)  # g(u)
+                            cbf_relaxed = cbf_base + s_opt  # g(u)+s
+                            print(f"Min CBF base g(u):      {float(np.min(cbf_base)):.6f}")
+                            print(f"Min CBF relaxed g(u)+s: {float(np.min(cbf_relaxed)):.6f}")
+                        except Exception as e:
+                            print(f"[IPOPT DEBUG] Failed to compute base/relaxed CBF mins: {e}")
 
             # Check resulting trajectory velocities
             if predicted_trajectory is not None:
@@ -1653,9 +2006,21 @@ class NLPMPCController:
             else:
                 print("  (no cbf_h_values available)")
 
+
         # ------------------------------------------------------------------
-        # FINAL return dict – v4 logging compatible
+        # FINAL return dict
         # ------------------------------------------------------------------
+
+        slack_stats = None
+        if getattr(self, "enable_cbf_slack", False) and (s_opt is not None):
+            slack_stats = {
+                "max": float(np.max(s_opt)),
+                "mean": float(np.mean(s_opt)),
+                "sum": float(np.sum(s_opt)),
+                "l2": float(np.linalg.norm(s_opt)),
+            }
+
+
         return {
             "success": success,
 
@@ -1676,6 +2041,10 @@ class NLPMPCController:
                 "cbf": cbf_constraint_vals,
                 "state": state_constraint_vals,
             },
+
+            # Slack values for logging/analysis
+            "cbf_slack_values": s_opt,  # (H,) or None
+            "cbf_slack_stats": slack_stats,  # dict or None
 
             # Performance metrics
             "solve_time": safe_solve_time,

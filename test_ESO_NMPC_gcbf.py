@@ -912,7 +912,7 @@ class DistributedMPCController:
                 self._log_presolve_graph(agent_idx, persistent_controller.mpc_instance.initial_graph)
 
                 # Solve MPC (IPOPT-based) with updated state
-                mpc_result = persistent_controller.solve(max_iterations=100)
+                mpc_result = persistent_controller.solve(max_iterations=500)
                 # mpc_result = False
                 solve_time = time.time() - solve_start_time
 
