@@ -271,6 +271,7 @@ Run simulation with random obstacle and agent placement:
 ```bash
 python test_ESO_NMPC_gcbf.py \
   --gcbf-path logs/DoubleIntegrator/gcbf+/seed1234_20251130013419 \
+  --env DoubleIntegratorNoClipping \
   --area-size 4.0 \
   --epi 1 \
   --obs 10 \

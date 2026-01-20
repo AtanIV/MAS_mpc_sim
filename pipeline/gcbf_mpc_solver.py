@@ -367,7 +367,7 @@ class NLPMPCController:
 
         # Existing weights
         self.vel_weight = 0.1 # scales the whole near-goal velocity term
-        self.vel_penalty_weight = 1
+        self.vel_penalty_weight = 10
         self.vel_smooth_eps = 0.01
         self.vel_exp_k = 10
         self.pd_damp_gain = 0.3
@@ -431,10 +431,34 @@ class NLPMPCController:
         self.control_dim = 2
 
         # --- Slack relaxation for CBF (soft feasibility) ---
-        self.enable_cbf_slack = True  # toggle this if you want hard CBF again
-        self.cbf_slack_l1_weight = 100.0  # start 1e1–1e3 depending on scale
-        self.cbf_slack_weight = 1e4  # tune: 1e3–1e6 typical
-        # ---------------------------------------------------
+        self.enable_cbf_slack = True  # toggle this for hard CBF
+        self.cbf_slack_l1_weight = 200.0  # start 1e1–1e3 depending on scale
+        self.cbf_slack_weight = 4e4  # tune: 1e3–1e6 typical
+
+        # --- Passing-bias (symmetry breaking) for close agent-agent interactions ---
+        self.enable_passing_bias = True
+        self.passing_bias_weight = 0.0005
+
+        # Edge appears at comm radius; bias ramps from 0 at comm_radius to 1 at comm_radius - margin
+        self.passing_bias_comm_radius = 0.4*float(getattr(env, "_params", {}).get("comm_radius", 0.5))
+        self.passing_bias_margin = 0.2 * self.passing_bias_comm_radius
+
+        # Optional EMA smoothing of the bias vector across MPC steps (helps edge pop jitter)
+        self.passing_bias_ema_beta = 0.85
+
+        # Cached passing-bias state (updated once per MPC solve)
+        self._passing_bias_raw_ema = np.zeros(2, dtype=np.float64)
+        self._passing_bias_dir = np.zeros(2, dtype=np.float64)
+        self._passing_bias_scale = 0.0
+
+        # Optional time weighting across horizon (default uniform)
+        self.passing_bias_time_decay = 0.0  # 0 => gamma=1; else exp(-decay*t)
+        t_idx = np.arange(horizon, dtype=np.float64)
+        self._passing_bias_gamma = (
+            np.exp(-self.passing_bias_time_decay * t_idx)
+            if self.passing_bias_time_decay > 0 else np.ones_like(t_idx)
+        )
+        # --------------------------------------------------------------------------
 
         self.control_vars = horizon * self.control_dim  # only controls
         self.cbf_slack_vars = horizon if self.enable_cbf_slack else 0  # one slack per CBF step
@@ -778,6 +802,15 @@ class NLPMPCController:
             control_jax = jnp.array(u_flat.reshape((self.horizon, self.control_dim)))
             base_cost = float(self.objective_jax(control_jax))
 
+            # Passing-bias cost (symmetry breaking near other agents)
+            bias_cost = 0.0
+            if getattr(self, "enable_passing_bias", False) and float(getattr(self, "_passing_bias_scale", 0.0)) > 1e-12:
+                u_seq = u_flat.reshape((self.horizon, self.control_dim)).astype(np.float64)
+                dir_vec = np.asarray(self._passing_bias_dir, dtype=np.float64).reshape(2, )
+                gamma = np.asarray(getattr(self, "_passing_bias_gamma", np.ones(self.horizon)), dtype=np.float64)
+                proj = u_seq @ dir_vec  # (H,)
+                bias_cost = float(-self.passing_bias_weight * self._passing_bias_scale * np.sum(gamma * proj))
+
             # Slack cost
             slack_cost = 0.0
             if self.enable_cbf_slack and s is not None:
@@ -786,11 +819,12 @@ class NLPMPCController:
                     self.cbf_slack_weight * np.sum(np.square(s))
                 )
 
-            # Keep your old cbf_pen hook (still off by default)
+            # Keep old cbf_pen hook (still off by default)
             # cbf_pen = self._cbf_soft_penalty_value(u_flat)
             cbf_pen = 0.0 # remove cbf pen for now
 
-            return base_cost + slack_cost + self.cbf_soft_weight * cbf_pen
+            return base_cost + slack_cost + bias_cost + self.cbf_soft_weight * cbf_pen
+
 
         except Exception as e:
             print(f"    Error in objective function: {e}")
@@ -819,6 +853,16 @@ class NLPMPCController:
 
             grad_u = base_grad_u + self.cbf_soft_weight * cbf_grad_u
 
+            # Passing-bias gradient (matches bias_cost)
+            if getattr(self, "enable_passing_bias", False) and float(getattr(self, "_passing_bias_scale", 0.0)) > 1e-12:
+                dir_vec = np.asarray(self._passing_bias_dir, dtype=np.float64).reshape(2, )
+                gamma = np.asarray(getattr(self, "_passing_bias_gamma", np.ones(self.horizon)),
+                                   dtype=np.float64).reshape(-1, 1)  # (H,1)
+                per_step = (-float(self.passing_bias_weight) * float(
+                    self._passing_bias_scale)) * gamma * dir_vec.reshape(1, 2)  # (H,2)
+                grad_u = grad_u + per_step.reshape(-1).astype(np.float64)
+
+            # Slack gradient
             if self.enable_cbf_slack:
                 grad_s = np.zeros(self.cbf_slack_vars, dtype=np.float64)
                 if s is not None:
@@ -1078,6 +1122,7 @@ class NLPMPCController:
             cbf_vals = cbf_vals + s
 
         return np.concatenate([cbf_vals, state_vals], axis=0)
+        # return cbf_vals
 
     # def combined_constraints_jacobian(self, decision_vector: np.ndarray) -> np.ndarray:
     #     """
@@ -1113,7 +1158,6 @@ class NLPMPCController:
 
             I = np.eye(Nc, dtype=np.float64)  # d(cbf+s)/ds = I  (Nc, Nc) when slack_vars==Nc
             if slack_vars != Nc:
-                # If you choose a different slack dimension later, keep it consistent here
                 I = np.eye(Nc, slack_vars, dtype=np.float64)
 
             Z = np.zeros((Ns, slack_vars), dtype=np.float64)
@@ -1127,7 +1171,149 @@ class NLPMPCController:
         # J = J_state_u  # SOFT CBF
         return J.ravel()
 
+    # def combined_constraints_jacobian(self, decision_vector: np.ndarray) -> np.ndarray:
+    #     u_flat, _ = self._split_decision(decision_vector)
+    #
+    #     J_cbf_u = np.array(self.constraint_jacobian(u_flat), dtype=np.float64)  # (Nc, control_vars)
+    #     # J_state_u = np.array(self.state_constraint_jacobian(u_flat), dtype=np.float64)  # DISABLED (CBF-only)
+    #
+    #     if getattr(self, "enable_cbf_slack", False):
+    #         Nc = J_cbf_u.shape[0]
+    #         slack_vars = int(getattr(self, "cbf_slack_vars", 0))
+    #
+    #         # d(cbf+s)/ds = I (Nc x slack_vars)
+    #         I = np.eye(Nc, slack_vars, dtype=np.float64)
+    #
+    #         top = np.concatenate([J_cbf_u, I], axis=1)  # (Nc, control+slack)
+    #         return top.ravel()
+    #
+    #     return J_cbf_u.ravel()
+
     # ===========================================================================================
+
+    @staticmethod
+    def _smootherstep01(t: float) -> float:
+        """C2 smoothstep on [0,1]."""
+        t = float(np.clip(t, 0.0, 1.0))
+        return float(t ** 3 * (t * (6.0 * t - 15.0) + 10.0))
+
+    def _passing_bias_gate(self, d: float) -> float:
+        """
+        Smooth distance gate:
+          - 0 at d >= comm_radius
+          - ramps up smoothly
+          - 1 at d <= comm_radius - margin
+        """
+        d0 = float(self.passing_bias_comm_radius)
+        d1 = float(max(0.0, d0 - float(self.passing_bias_margin)))
+
+        if d >= d0:
+            return 0.0
+        if d <= d1 or abs(d0 - d1) <= 1e-12:
+            return 1.0
+
+        t = (d0 - d) / (d0 - d1)  # 0..1
+        return self._smootherstep01(t)
+
+    def _update_passing_bias_from_graph(self, graph) -> None:
+        """
+        Compute passing-bias direction/scale from the current local graph (once per MPC solve).
+        Uses world-frame CW normal of r = p_other - p_ego:
+            n_cw = [dy, -dx] / ||r||
+        """
+        if not getattr(self, "enable_passing_bias", False):
+            self._passing_bias_dir = np.zeros(2, dtype=np.float64)
+            self._passing_bias_scale = 0.0
+            return
+
+        try:
+            # Support GraphsTuple-like or dict
+            if isinstance(graph, dict):
+                node_type = np.asarray(graph["node_type"])
+                states = np.asarray(graph["states"])
+                senders = np.asarray(graph["senders"])
+                receivers = np.asarray(graph["receivers"])
+            else:
+                node_type = np.asarray(graph.node_type)
+                states = np.asarray(graph.states)
+                senders = np.asarray(graph.senders)
+                receivers = np.asarray(graph.receivers)
+
+            # agent nodes: node_type == 0
+            agent_nodes = np.where(node_type == 0)[0]
+            if agent_nodes.size == 0:
+                self._passing_bias_dir = np.zeros(2, dtype=np.float64)
+                self._passing_bias_scale = 0.0
+                return
+
+            ego_type_idx = int(getattr(self, "ego_agent_idx", 0))
+            ego_node = int(agent_nodes[ego_type_idx]) if ego_type_idx < agent_nodes.size else int(agent_nodes[0])
+
+            p_ego = states[ego_node, :2].astype(np.float64)
+
+            b_raw = np.zeros(2, dtype=np.float64)
+            eps = 1e-12
+
+            # Sum over all close agent-agent edges incident to ego
+            for s, r in zip(senders, receivers):
+                s = int(s);
+                r = int(r)
+
+                # Only agent-agent edges
+                if node_type[s] != 0 or node_type[r] != 0:
+                    continue
+
+                # Only edges incident to ego (ego objective)
+                if s == ego_node:
+                    nbr = r
+                elif r == ego_node:
+                    nbr = s
+                else:
+                    continue
+
+                rvec = (states[nbr, :2].astype(np.float64) - p_ego)
+                d = float(np.linalg.norm(rvec))
+
+                a = self._passing_bias_gate(d)
+                if a <= 0.0:
+                    continue
+
+                dx, dy = float(rvec[0]), float(rvec[1])
+
+                # CW normal in world frame: rotate r by -90deg: [dy, -dx]
+                n = np.array([dy, -dx], dtype=np.float64)
+                n_norm = float(np.linalg.norm(n))
+                if n_norm <= eps:
+                    continue
+
+                n_hat = n / (n_norm + eps)
+                b_raw += a * n_hat
+
+            # EMA smoothing over time (optional)
+            beta = float(getattr(self, "passing_bias_ema_beta", 0.0))
+            if beta > 0.0:
+                self._passing_bias_raw_ema = beta * self._passing_bias_raw_ema + (1.0 - beta) * b_raw
+                b_use = self._passing_bias_raw_ema
+            else:
+                b_use = b_raw
+
+            scale = float(np.linalg.norm(b_use))
+            if scale <= eps:
+                self._passing_bias_dir = np.zeros(2, dtype=np.float64)
+                self._passing_bias_scale = 0.0
+            else:
+                self._passing_bias_dir = (b_use / (scale + eps)).astype(np.float64)
+                self._passing_bias_scale = scale
+
+            print(f"[passing-bias] scale={self._passing_bias_scale:.3e}, dir={self._passing_bias_dir}")
+
+        except Exception as e:
+            print(f"    [passing-bias] Error computing bias from graph: {e}")
+            self._passing_bias_dir = np.zeros(2, dtype=np.float64)
+            self._passing_bias_scale = 0.0
+
+    # ===========================================================================================
+
     def _cbf_soft_penalty_value(self, decision_vector: np.ndarray) -> float:
         """
         Sum_i [ gate(h_i) * (eps/(h_i+eps))^p ]  optionally * (1 + w_g * hinge(g_i))
@@ -1267,6 +1453,9 @@ class NLPMPCController:
         # print(f"  ✓ Model velocity saturation preserved")
         print(f"Graph structure: {self.graph_info}")
         print(f"Velocity bounds: {self.velocity_bounds}")
+
+        # Update bias according to initial graph
+        self._update_passing_bias_from_graph(self.initial_graph)
 
         if initial_guess is None:
             initial_guess = np.zeros(self.decision_vars)
@@ -1603,6 +1792,9 @@ class NLPMPCController:
                 axis=0
             )
 
+        # Update bias according to initial graph
+        self._update_passing_bias_from_graph(self.initial_graph)
+
         # IPOPT variable x0:
         #   - u-space if reparameterization is OFF: x = [u, s]
         #   - w-space if reparameterization is ON:  x = [w, s]
@@ -1679,20 +1871,20 @@ class NLPMPCController:
         nlp.add_option("max_iter", int(max_iterations))
 
         # Overall KKT tolerance (slightly loosened)
-        nlp.add_option("tol", float(max(tolerance, 1e-3)))
+        nlp.add_option("tol", float(max(tolerance, 1e-4)))
 
         # Explicit tolerances for feasibility and dual optimality
         nlp.add_option("constr_viol_tol", 1e-4)  # how tightly constraints must be satisfied
-        nlp.add_option("dual_inf_tol", 1e-2)  # how small dual infeasibility must be
+        nlp.add_option("dual_inf_tol", 1e-3)  # how small dual infeasibility must be
 
         nlp.add_option("print_level", 5)
         nlp.add_option("hessian_approximation", "limited-memory")
 
-        nlp.add_option("acceptable_tol", 1e-2)
-        nlp.add_option("acceptable_dual_inf_tol", 1e-1)
+        nlp.add_option("acceptable_tol", 1e-3)
+        nlp.add_option("acceptable_dual_inf_tol", 5e-2)
         nlp.add_option("acceptable_constr_viol_tol", 1e-3)
         nlp.add_option("acceptable_compl_inf_tol", 1e-3)
-        nlp.add_option("acceptable_iter", 3)
+        nlp.add_option("acceptable_iter", 5)
 
         nlp.add_option("nlp_scaling_method", "gradient-based")
 

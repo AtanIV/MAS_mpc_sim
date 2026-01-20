@@ -817,6 +817,10 @@ class DistributedMPCController:
                 # Extra IPOPT-aware fields
                 "ipopt_status": None,
                 "ipopt_iterations": None,
+
+                # Slack records
+                "cbf_slack_values": None,  # np.array (H,) when available
+                "cbf_slack_stats": None,  # dict with max/mean/sum/l2 when available
             }
 
             try:
@@ -912,7 +916,7 @@ class DistributedMPCController:
                 self._log_presolve_graph(agent_idx, persistent_controller.mpc_instance.initial_graph)
 
                 # Solve MPC (IPOPT-based) with updated state
-                mpc_result = persistent_controller.solve(max_iterations=500)
+                mpc_result = persistent_controller.solve(max_iterations=1000)
                 # mpc_result = False
                 solve_time = time.time() - solve_start_time
 
@@ -927,6 +931,8 @@ class DistributedMPCController:
                     record["mpc_iterations"] = mpc_result.get("nit", None)
                     record["ipopt_status"] = mpc_result.get("status", "success")
                     record["ipopt_iterations"] = mpc_result.get("nit", None)
+                    record["cbf_slack_values"] = mpc_result.get("cbf_slack_values", None)
+                    record["cbf_slack_stats"] = mpc_result.get("cbf_slack_stats", None)
 
                     u_star = mpc_result["optimal_control"]
                     if u_star.ndim == 1:
@@ -990,6 +996,8 @@ class DistributedMPCController:
                     record["mpc_iterations"] = mpc_result.get("nit", None)
                     record["ipopt_status"] = mpc_result.get("status", mpc_result.get("error", "unknown"))
                     record["ipopt_iterations"] = mpc_result.get("nit", None)
+                    record["cbf_slack_values"] = mpc_result.get("cbf_slack_values", None)
+                    record["cbf_slack_stats"] = mpc_result.get("cbf_slack_stats", None)
 
                     # Reset prediction sequence on failure to use constant vel assumptions
                     self.agent_control_sequences[agent_idx] = np.zeros((self.horizon, 2), dtype=float)
@@ -1595,7 +1603,10 @@ class AgentStepCSVLogger:
             "controller_used",     # MPC / SAFE_QP / EMERGENCY
             "mpc_iterations",      # int or blank
             "control_input",       # JSON-ified list or compact string
-            "predicted_h"          # JSON-ified list over horizon (or single next-step)
+            "predicted_h",          # JSON-ified list over horizon (or single next-step)
+            "cbf_slack_sum",
+            "cbf_slack_max",
+            "cbf_slack_values",
         ]
         import csv, json
         for i in range(num_agents):
@@ -1607,8 +1618,23 @@ class AgentStepCSVLogger:
 
     def log(self, agent_idx: int, step: int, cbf_initial: float,
             mpc_status: str, controller_used: str, mpc_iterations,
-            control_input, predicted_h):
+            control_input, predicted_h, cbf_slack_values=None, cbf_slack_stats=None):
+        import numpy as np
         import json
+        slack_sum = ""
+        slack_max = ""
+        slack_vals_str = ""
+
+        if cbf_slack_values is not None:
+            s = np.asarray(cbf_slack_values)
+            slack_sum = float(np.sum(s))
+            slack_max = float(np.max(s))
+            slack_vals_str = json.dumps(s.tolist())
+        elif cbf_slack_stats is not None:
+            # fallback if only stats exist
+            slack_sum = cbf_slack_stats.get("sum", "")
+            slack_max = cbf_slack_stats.get("max", "")
+
         ctrl_str = json.dumps(np.asarray(control_input).tolist()) if control_input is not None else ""
         ph_str   = json.dumps(np.asarray(predicted_h).tolist())   if predicted_h is not None else ""
         self.writers[agent_idx].writerow([
@@ -1618,7 +1644,10 @@ class AgentStepCSVLogger:
             controller_used or "",
             int(mpc_iterations) if mpc_iterations is not None else "",
             ctrl_str,
-            ph_str
+            ph_str,
+            slack_sum,
+            slack_max,
+            slack_vals_str,
         ])
         self.files[agent_idx].flush()
 
@@ -2230,6 +2259,8 @@ class ESOSafetyMPC:
                         mpc_iterations=info.get("mpc_iterations", info.get("nit", None)),
                         control_input=control_payload,
                         predicted_h=info.get("predicted_h", None),
+                        cbf_slack_values=info.get("cbf_slack_values", None),
+                        cbf_slack_stats=info.get("cbf_slack_stats", None),
                     )
 
                     print("[Logging] Per-agent info logged")
@@ -2815,6 +2846,36 @@ def create_manual_test_scenario():
     # goal_2_state = jnp.array([2.6, 3.5, 0.0, 0.0])  # Agent 2's goal
     # goal_3_state = jnp.array([3.5, 3.5, 0.0, 0.0])  # Agent 3's goal
     # goal_states = jnp.array([goal_0_state,goal_1_state])
+    # # ###################################################
+
+    # # #########################Goal Wiggle Test##########################
+    # # ==================== OBSTACLES ====================
+    # obs_positions = jnp.array([
+    #     [1.5, 1.5], [1.5, 2.5], [2.5, 1.5], [2.5, 2.5]
+    # ])
+    # obs_lengths_x = jnp.array([0.3, 0.3, 0.3, 0.3])
+    # obs_lengths_y = jnp.array([0.3, 0.3, 0.3, 0.3])
+    # obs_thetas = jnp.array([0.0, 0.0, 0.0, 0.0])
+    #
+    # obstacles = env.create_obstacles(obs_positions, obs_lengths_x, obs_lengths_y, obs_thetas)
+    #
+    # # ==================== AGENTS ====================
+    # # agent_0_state = jnp.array([1, 0.5, 0.0, 0.0])
+    # # agent_1_state = jnp.array([0.5, 1, 0.0, 0.0])
+    # agent_0_state = jnp.array([2.3, 2, 0.0, 0.0])
+    # agent_1_state = jnp.array([2, 2.3, 0.0, 0.0])
+    # agent_2_state = jnp.array([3, 3.2, 0.0, 0.0])
+    # agent_3_state = jnp.array([2, 3.5, 0.0, 0.0])
+    # # agent_states = jnp.array([agent_0_state, agent_1_state])
+    # agent_states = jnp.array([agent_0_state, agent_1_state, agent_2_state, agent_3_state])
+    #
+    # # ==================== GOALS ====================
+    # goal_0_state = jnp.array([2.3, 2, 0.0, 0.0])  # Agent 0's goal
+    # goal_1_state = jnp.array([2, 2.3, 0.0, 0.0])  # Agent 1's goal
+    # goal_2_state = jnp.array([3.2, 3.4, 0.0, 0.0])  # Agent 2's goal
+    # goal_3_state = jnp.array([1.9, 3.4, 0.0, 0.0])  # Agent 3's goal
+    # # goal_states = jnp.array([goal_0_state,goal_1_state])
+    # goal_states = jnp.array([goal_0_state, goal_1_state, goal_2_state, goal_3_state])
     # # ###################################################
 
     # ==================== CREATE GRAPH ====================
